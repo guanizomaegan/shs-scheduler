@@ -168,7 +168,7 @@ with st.sidebar:
     <hr style="border-color:#2D5275; margin: 0.5rem 0 1rem">
     """, unsafe_allow_html=True)
 
-    page = st.radio(
+    page = st.button(
         "Navigation",
         options=["🏠  Dashboard", "📋  Schedule", "📚  Subjects",
                  "👩‍🏫  Teachers", "🏫  Sections"],
@@ -299,85 +299,161 @@ if page == "🏠  Dashboard":
 
 # ── SCHEDULE ──────────────────────────────────────────────────────────────────
 elif page == "📋  Schedule":
-    st.markdown("## 📋 Schedule")
-    st.caption("Weekly class timetable per section")
+    topbar("Schedule",
+           "Per-grade timetable with drag-and-drop editing")
 
-    if not data()["sections"]:
-        st.info("No sections found. Add sections first.")
-    else:
-        col_a, col_b = st.columns([3, 1])
-        with col_a:
-            selected_sec = st.selectbox("Select section to view", data()["sections"],
-                                        key="tt_section")
-        with col_b:
-            st.markdown("<br>", unsafe_allow_html=True)
-            add_entry = st.button("➕ Add Entry", key="tt_add")
+    if not D()["sections"]:
+        st.warning("No sections yet — add them in the Sections page first.")
+        close_content(); st.stop()
+    if not D()["subjects"]:
+        st.warning("No subjects yet — add them in the Subjects page first.")
+        close_content(); st.stop()
 
-        # Timetable
-        st.markdown(f"### {selected_sec}")
-        st.markdown(render_timetable(selected_sec), unsafe_allow_html=True)
+    # Handle save from JS via query params
+    qp = st.query_params
+    if "save_section" in qp and "save_data" in qp:
+        try:
+            new_ents = json.loads(qp["save_data"])
+            sec_key  = qp["save_section"]
+            day_key  = qp.get("save_day","")
+            # Merge: keep entries for other days, replace for this day
+            old = [e for e in D()["schedule"].get(sec_key,[]) if e.get("day") != day_key]
+            D()["schedule"][sec_key] = old + [dict(e,section=sec_key) for e in new_ents]
+            persist()
+            st.query_params.clear()
+            st.success(f"✅ Saved {len(new_ents)} entries for {sec_key} — {day_key}.")
+            st.rerun()
+        except Exception as ex:
+            st.error(f"Save error: {ex}")
 
-        # Delete entry
-        sec_entries = data()["schedule"].get(selected_sec, [])
-        if sec_entries:
-            st.markdown("<br>", unsafe_allow_html=True)
-            with st.expander("🗑 Remove a schedule entry"):
-                entry_labels = [
-                    f"{e['day']} | {e['period']} | {e['subject']} ({e['teacher']})"
-                    for e in sec_entries
+    # postMessage bridge
+    st.markdown("""<script>
+    window.addEventListener('message',function(ev){
+      if(ev.data&&ev.data.type==='shs_save'){
+        const p=new URLSearchParams(window.location.search);
+        p.set('save_section',ev.data.section);
+        p.set('save_data',   ev.data.entries);
+        // extract day from first entry
+        try{const ents=JSON.parse(ev.data.entries);
+            if(ents.length)p.set('save_day',ents[0].day);}catch(e){}
+        window.location.search=p.toString();
+      }
+    });</script>""", unsafe_allow_html=True)
+
+    # ── Grade tabs ──────────────────────────────────────────────────────────
+    if "sched_grade" not in st.session_state:
+        st.session_state.sched_grade = "Grade 11"
+    if "sched_day" not in st.session_state:
+        st.session_state.sched_day = DAYS[0]
+
+    g11col, g12col, spacer = st.columns([1,1,4])
+    with g11col:
+        if st.button("📘 Grade 11", key="btn_g11",
+            type="primary" if st.session_state.sched_grade=="Grade 11" else "secondary"):
+            st.session_state.sched_grade = "Grade 11"; st.rerun()
+    with g12col:
+        if st.button("📗 Grade 12", key="btn_g12",
+            type="primary" if st.session_state.sched_grade=="Grade 12" else "secondary"):
+            st.session_state.sched_grade = "Grade 12"; st.rerun()
+
+    grade = st.session_state.sched_grade
+    PERIODS = get_periods(grade)
+    grade_secs = sections_for(grade)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Time config (inline expander) ───────────────────────────────────────
+    render_time_config(grade)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if not grade_secs:
+        st.info(f"No sections for {grade} yet. Add them in the Sections page.")
+        close_content(); st.stop()
+
+    # ── Day selector ─────────────────────────────────────────────────────────
+    st.markdown("**Select Day to View / Edit:**")
+    day_cols = st.columns(len(DAYS))
+    for i, d in enumerate(DAYS):
+        with day_cols[i]:
+            if st.button(d, key=f"d_{d}_{grade}",
+                type="primary" if st.session_state.sched_day==d else "secondary"):
+                st.session_state.sched_day = d; st.rerun()
+    sel_day = st.session_state.sched_day
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Combined read-only view ───────────────────────────────────────────────
+    card(f"📊  {grade}  ·  {sel_day}  —  All Sections Overview")
+    overview_h = combined_timetable_html(grade, sel_day, PERIODS)
+    grid_h = max(350, 68*len(PERIODS)+100)
+    components.html(overview_h, height=grid_h, scrolling=True)
+
+    # Completion info
+    total_slots = len(PERIODS) * len(grade_secs)
+    filled = sum(
+        1 for sec in grade_secs
+        for e in D()["schedule"].get(sec,[])
+        if e.get("day")==sel_day
+    )
+    pct = int(filled/total_slots*100) if total_slots else 0
+    bar_w = max(2, pct)
+    st.markdown(f"""
+    <div style="margin:.6rem 0 .2rem;display:flex;align-items:center;gap:10px">
+        <div style="flex:1;background:#E2EAF3;border-radius:20px;height:7px;overflow:hidden">
+            <div style="width:{bar_w}%;background:linear-gradient(90deg,#3B82F6,#60A5FA);
+                        height:100%;border-radius:20px;transition:width .4s"></div>
+        </div>
+        <div style="font-size:.75rem;font-weight:700;color:#475569;white-space:nowrap">
+            {filled}/{total_slots} slots filled ({pct}%)</div>
+    </div>""", unsafe_allow_html=True)
+    end_card()
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Per-section editor ────────────────────────────────────────────────────
+    card(f"✏️  Edit Timetable  ·  {sel_day}")
+    st.markdown(f"""
+    <div style="margin-bottom:.9rem;font-size:.8rem;color:#475569;line-height:1.6;
+                background:#F8FAFC;border-radius:9px;padding:9px 14px;
+                border:1.5px solid #E2EAF3">
+        Choose a section below, then drag subjects (🔵 blue pills) onto empty slots and
+        teachers (🟢 green pills) onto filled slots. Drag a card to move it.
+        Hit <b>Save Schedule</b> to commit.
+    </div>""", unsafe_allow_html=True)
+
+    edit_sec = st.selectbox("Section to edit", grade_secs,
+                            key=f"edit_sec_{grade}", label_visibility="visible")
+
+    dnd_h = max(300, 68*len(PERIODS)+160)
+    dnd = dnd_editor_html(edit_sec, sel_day,
+                          D()["subjects"], D()["teachers"],
+                          PERIODS, D()["schedule"])
+    components.html(dnd, height=dnd_h, scrolling=True)
+
+    # Remove entry helper
+    sec_day_ents = [e for e in D()["schedule"].get(edit_sec,[]) if e.get("day")==sel_day]
+    if sec_day_ents:
+        with st.expander("🗑  Remove a specific entry from this section"):
+            labels = [f"P{PERIODS.index(e['period'])+1}  ·  {e['period']}  ·  "
+                      f"{e['subject']}  ({e.get('teacher','—')})"
+                      if e["period"] in PERIODS else
+                      f"{e['period']}  ·  {e['subject']}"
+                      for e in sec_day_ents]
+            to_del = st.selectbox("Entry", labels, key="del_entry_sel")
+            if st.button("Remove Entry", key="del_btn"):
+                idx = labels.index(to_del)
+                target = sec_day_ents[idx]
+                D()["schedule"][edit_sec] = [
+                    e for e in D()["schedule"][edit_sec]
+                    if not (e.get("day")==sel_day and
+                            e.get("period")==target["period"] and
+                            e.get("subject")==target["subject"])
                 ]
-                to_delete = st.selectbox("Select entry to remove", entry_labels, key="del_entry")
-                if st.button("Remove Entry", key="del_btn"):
-                    idx = entry_labels.index(to_delete)
-                    data()["schedule"][selected_sec].pop(idx)
-                    if not data()["schedule"][selected_sec]:
-                        del data()["schedule"][selected_sec]
-                    persist()
-                    st.success("Entry removed.")
-                    st.rerun()
+                persist(); st.success("Removed."); st.rerun()
 
-        # Add entry form
-        if add_entry or st.session_state.get("show_add_form"):
-            st.session_state["show_add_form"] = True
-            st.markdown("---")
-            st.markdown("#### Add New Entry")
-            if not (data()["subjects"] and data()["teachers"]):
-                st.warning("Add subjects and teachers first.")
-            else:
-                f1, f2, f3 = st.columns(3)
-                f4, f5 = st.columns(2)
-                with f1:
-                    a_day = st.selectbox("Day", DAYS, key="a_day")
-                with f2:
-                    a_per = st.selectbox("Period", PERIODS, key="a_per")
-                with f3:
-                    a_sub = st.selectbox("Subject", data()["subjects"], key="a_sub")
-                with f4:
-                    a_tch = st.selectbox("Teacher", data()["teachers"], key="a_tch")
-                with f5:
-                    st.markdown("<br>", unsafe_allow_html=True)
-                    s1, s2 = st.columns(2)
-                    with s1:
-                        if st.button("Save", key="save_entry"):
-                            entries = data()["schedule"].setdefault(selected_sec, [])
-                            conflict = next(
-                                (e for e in entries if e["day"] == a_day and e["period"] == a_per),
-                                None)
-                            if conflict:
-                                st.error(f"Conflict with {conflict['subject']}.")
-                            else:
-                                entries.append({
-                                    "section": selected_sec, "day": a_day,
-                                    "period": a_per, "subject": a_sub, "teacher": a_tch
-                                })
-                                persist()
-                                st.session_state["show_add_form"] = False
-                                st.success("Added!")
-                                st.rerun()
-                    with s2:
-                        if st.button("Cancel", key="cancel_entry"):
-                            st.session_state["show_add_form"] = False
-                            st.rerun()
+    end_card()
+    close_content()
 
 
 # ── SUBJECTS ──────────────────────────────────────────────────────────────────
