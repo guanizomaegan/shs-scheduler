@@ -42,7 +42,6 @@ st.markdown("""
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 [data-testid="stSidebar"] { background: #1A3A5C !important; }
 [data-testid="stSidebar"] * { color: #CBD5E0 !important; }
-[data-testid="stSidebarNav"] { display: none; }
 .metric-card { background:#fff; border:1px solid #E2E8F0; border-radius:12px;
                padding:1.2rem 1.4rem; text-align:center; }
 .metric-card .mv { font-size:2.4rem; font-weight:700; line-height:1; }
@@ -60,7 +59,7 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
                margin-bottom:0.8rem; border-bottom:1px solid #E2E8F0;
                padding-bottom:0.5rem; }
 label { font-weight:500 !important; color:#1A3A5C !important; }
-#MainMenu, footer, header { visibility:hidden; }
+#MainMenu, footer { visibility:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
